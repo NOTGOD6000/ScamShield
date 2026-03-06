@@ -16,8 +16,9 @@ private val DarkColorScheme = darkColorScheme(
 fun ScamShieldTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = DarkColorScheme,
-        typography = Typography()
-    ) {
+        typography = ScamShieldTypography
+    )
+    {
         Surface(
             color = MaterialTheme.colorScheme.background
         ) {

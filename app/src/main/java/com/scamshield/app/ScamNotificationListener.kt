@@ -27,7 +27,8 @@ class ScamNotificationListener : NotificationListenerService() {
 
         if (fullText.isBlank()) return
 
-        val result = detector.analyze(fullText)
+        val result = detector.analyze(fullText, sbn.packageName)
+
 
         // Calm Advisor: Only alert if >= 70
         if (result.score >= 70) {

@@ -12,13 +12,21 @@ class ScamDetector {
     // 🔥 Core Detection Patterns
     // =========================
 
+    private val legitHeaderRegex =
+        Regex("^[A-Z]{2}-[A-Z0-9]{5,9}-[A-Z]$", RegexOption.IGNORE_CASE)
+
+    private val trustedBrandRegex = Regex(
+        "\\b(domino|shein|swiggy|zomato|amazon|flipkart|hdfc|sbi|icici|axis)\\b",
+        RegexOption.IGNORE_CASE
+    )
+
     private val urgencyRegex = Regex(
-        "\\b(urgent|immediately|asap|now|expire[d]?|limited\\s*time|act\\s*now|final\\s*warning|last\\s*chance)\\b",
+        "\\b(urgent|immediately|asap|expire[d]?|limited\\s*time|final\\s*warning|last\\s*chance)\\b",
         RegexOption.IGNORE_CASE
     )
 
     private val sensitiveRegex = Regex(
-        "\\b(o\\W*t\\W*p|one\\s*time\\s*password|veri?fy|kyc|update\\s*account|bank|atm|card\\s*blocked|login|pin)\\b",
+        "\\b(verify|kyc|update\\s*account|bank|atm|card\\s*blocked|pin)\\b",
         RegexOption.IGNORE_CASE
     )
 
@@ -27,62 +35,89 @@ class ScamDetector {
         RegexOption.IGNORE_CASE
     )
 
-    // Detect ANY domain (even without http)
     private val genericDomainRegex = Regex(
         "\\b[a-zA-Z0-9-]+\\.[a-zA-Z]{2,}\\b",
         RegexOption.IGNORE_CASE
     )
 
-    // Suspicious TLDs
     private val suspiciousTldRegex = Regex(
         "\\.(ru|xyz|top|click|gq|tk|ml|ga|cf)\\b",
         RegexOption.IGNORE_CASE
     )
 
-    // URL shorteners
     private val shortenerRegex = Regex(
         "\\b(bit\\.ly|tinyurl\\.com|t\\.co|goo\\.gl|shorturl\\.at|rebrand\\.ly)\\b",
         RegexOption.IGNORE_CASE
     )
 
-    // Money detection: ₹50,000 | Rs 50,000 | 50000 | ₹50000
     private val moneyRegex = Regex(
         "(₹|rs\\.?\\s?)?\\s?\\d{1,3}(,\\d{3})+|\\b\\d{5,}\\b",
         RegexOption.IGNORE_CASE
     )
 
-    // Long digit sequences (fake ref IDs)
-    private val digitHeavyRegex = Regex("\\d{6,}")
+    private val digitHeavyRegex = Regex("\\b\\d{6,}\\b")
 
-    // Click bait detection (catch cl1ck, clicc, etc.)
     private val clickRegex = Regex(
         "\\b(cl[i1]ck|tap|open|visit)\\b",
         RegexOption.IGNORE_CASE
     )
 
-    fun analyze(text: String?): ScanResult {
+    // =========================
+    // 🔍 Analyzer
+    // =========================
+
+    fun analyze(text: String?, sender: String? = null): ScanResult {
 
         if (text.isNullOrBlank()) {
             return ScanResult(0, "No Content", emptyList())
         }
 
         val lower = text.lowercase()
+        val trimmedSender = sender?.trim() ?: ""
+
+        val isLegitHeader = legitHeaderRegex.containsMatchIn(trimmedSender)
+        val trustedBrandHit = trustedBrandRegex.containsMatchIn(lower)
+
+        val isOtpMessage =
+            (lower.contains("otp") || lower.contains("one time password")) &&
+                    digitHeavyRegex.containsMatchIn(lower)
+
+        val linkHit = genericDomainRegex.containsMatchIn(lower)
+        val rewardHit = rewardRegex.containsMatchIn(lower)
+        val urgencyHit = urgencyRegex.containsMatchIn(lower)
+        val moneyHit = moneyRegex.containsMatchIn(lower)
+        val shortenerHit = shortenerRegex.containsMatchIn(lower)
+
+        val looksTransactional =
+            !linkHit &&
+                    !rewardHit &&
+                    !urgencyHit &&
+                    !moneyHit &&
+                    !shortenerHit
+
+        // =========================
+        // 🛡 EARLY WHITELIST (Before Scoring)
+        // =========================
+
+        if (isOtpMessage && looksTransactional && (isLegitHeader || trustedBrandHit)) {
+            return ScanResult(
+                score = 5,
+                label = "✔ Likely Safe",
+                reasons = listOf("Verified transactional OTP")
+            )
+        }
+
+        // =========================
+        // 🧠 Scoring
+        // =========================
+
         var score = 0
         val reasons = mutableListOf<String>()
 
-        val urgencyHit = urgencyRegex.containsMatchIn(lower)
         val sensitiveHit = sensitiveRegex.containsMatchIn(lower)
-        val rewardHit = rewardRegex.containsMatchIn(lower)
-        val linkHit = genericDomainRegex.containsMatchIn(lower)
         val suspiciousTldHit = suspiciousTldRegex.containsMatchIn(lower)
-        val shortenerHit = shortenerRegex.containsMatchIn(lower)
-        val moneyHit = moneyRegex.containsMatchIn(lower)
         val digitHeavyHit = digitHeavyRegex.containsMatchIn(lower)
         val clickHit = clickRegex.containsMatchIn(lower)
-
-        // =========================
-        // 🧠 Base Scoring
-        // =========================
 
         if (urgencyHit) {
             score += 25
@@ -90,7 +125,7 @@ class ScamDetector {
         }
 
         if (sensitiveHit) {
-            score += 40
+            score += 35
             reasons.add("Sensitive information request detected")
         }
 
@@ -119,9 +154,9 @@ class ScamDetector {
             reasons.add("Large money amount mentioned")
         }
 
-        if (digitHeavyHit) {
-            score += 15
-            reasons.add("Unusual long numeric sequence detected")
+        if (digitHeavyHit && !isOtpMessage) {
+            score += 10
+            reasons.add("Unusual numeric sequence detected")
         }
 
         if (clickHit) {
@@ -139,7 +174,7 @@ class ScamDetector {
         }
 
         if (urgencyHit && sensitiveHit) {
-            score += 60
+            score += 50
             reasons.add("High-risk combo: Urgency + Sensitive request")
         }
 
